@@ -1,15 +1,15 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 
-	_ "github.com/garsue/sparql/sql"
+	"github.com/garsue/sparql"
 	"github.com/jinzhu/gorm"
-	"gopkg.in/urfave/cli.v1"
+	"github.com/urfave/cli"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	app.Name = "hojin"
 	app.Usage = "command line tool for hojin-info"
 	app.Action = func(c *cli.Context) error {
-		return search(context.Background(), c.Args().First())
+		return search(c.Args().First())
 	}
 
 	if err := app.Run(os.Args); err != nil {
@@ -26,12 +26,15 @@ func main() {
 	}
 }
 
-func search(ctx context.Context, name string) (err error) {
+func search(name string) (err error) {
 	if name == "" {
 		return errors.New("specify office name")
 	}
 
-	db, err := gorm.Open("sparql", "https://api.hojin-info.go.jp/sparql")
+	dsn := "http://api.hojin-info.go.jp/sparql"
+	sql.Register("sparql", sparql.NewConnector(dsn).Driver())
+
+	db, err := gorm.Open("sparql", dsn)
 	if err != nil {
 		return err
 	}
@@ -42,8 +45,11 @@ func search(ctx context.Context, name string) (err error) {
 	}()
 
 	var hojins []struct {
-		ID   uint64
-		Name string
+		ID          uint64
+		Name        string
+		EmergedAt   string
+		Description string
+		AddressType string
 	}
 
 	//noinspection SqlNoDataSourceInspection
@@ -51,18 +57,22 @@ func search(ctx context.Context, name string) (err error) {
 PREFIX hj: <http://hojin-info.go.jp/ns/domain/biz/1#>
 PREFIX ic: <http://imi.go.jp/ns/core/rdf#>
 	
-SELECT ?id,?name FROM <http://hojin-info.go.jp/graph/hojin>
+SELECT * FROM <http://hojin-info.go.jp/graph/hojin>
 WHERE {
 	?s hj:法人基本情報 ?n .
-	?n ic:ID/ic:識別値 ?id .
-	?n ic:名称/ic:表記 ?name .
+	?n ic:ID/ic:識別値 ?id ;
+	ic:名称/ic:表記 ?name ;
+	ic:活動状況/ic:発生日/ic:標準型日時 ?emerged_at ;
+	ic:活動状況/ic:説明 ?description ;
+	ic:住所/ic:種別 ?address_type ;
+	ic:住所/ic:郵便番号 ?zip_code.
 	FILTER regex(?name, $1)
 } LIMIT 100`, name).Find(&hojins).Error; err != nil {
 		return err
 	}
 
 	for _, h := range hojins {
-		fmt.Println(h.ID, h.Name)
+		fmt.Printf("%+v\n", h)
 	}
 
 	return nil
